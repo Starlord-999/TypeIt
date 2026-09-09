@@ -2,12 +2,12 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter, Manager};
 
-use crate::audio::AudioRecorder;
-use crate::cleanup::cleanup_text;
+use crate::audio::{self, AudioRecorder};
+use crate::cleanup::{cleanup_partial, cleanup_text};
 use crate::paste::paste_text;
 use crate::settings::Settings;
-use crate::transcribe_local;
 use crate::transcribe_groq;
+use crate::transcribe_local;
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub enum RecordingState {
@@ -97,38 +97,81 @@ impl Recorder {
         settings: &Settings,
         app_dir: &PathBuf,
     ) -> Result<String, String> {
-        let temp_path = app_dir.join("temp_recording.wav");
-
-        // Save audio
-        {
+        let pcm = {
             let mut recorder = self.audio_recorder.lock().unwrap();
-            recorder.stop_and_save(&temp_path)?;
-        }
-
-        // Transcribe
-        let raw_text = match settings.engine.as_str() {
-            "local" => {
-                let model_path = app_dir.join(transcribe_local::model_filename(&settings.whisper_model));
-                transcribe_local::transcribe_local(app, &model_path, &temp_path, &settings.language).await?
-            }
-            "cloud" => {
-                transcribe_groq::transcribe_groq(&settings.groq_api_key, &temp_path).await?
-            }
-            _ => return Err(format!("Unknown engine: {}", settings.engine)),
+            recorder.stop_and_save()?
+        };
+        // None means everything was already said via mid-recording chunks.
+        let Some(pcm) = pcm else {
+            return Ok(String::new());
         };
 
-        // Cleanup temp file
+        let temp_path = app_dir.join("temp_recording.wav");
+        audio::write_wav(&pcm, &temp_path)?;
+
+        let raw_text = transcribe(app, settings, app_dir, &temp_path).await?;
         let _ = std::fs::remove_file(&temp_path);
 
-        // Clean up text
         let cleaned = cleanup_text(&raw_text);
-
-        // Auto-paste
         if !cleaned.is_empty() {
             paste_text(&cleaned)?;
         }
 
         Ok(cleaned)
+    }
+
+    /// Runs periodically while recording, so speech gets typed out in
+    /// chunks instead of waiting for the whole recording to finish. Each
+    /// chunk is treated as a standalone fragment: lightly cleaned (no
+    /// forced capitalization/punctuation, since it's mid-sentence) and
+    /// pasted immediately, with no correction of earlier chunks.
+    pub async fn flush_chunk(
+        &self,
+        app: &AppHandle,
+        settings: &Settings,
+        app_dir: &PathBuf,
+    ) -> Result<(), String> {
+        if self.get_state() != RecordingState::Recording {
+            return Ok(());
+        }
+
+        let pcm = {
+            let mut recorder = self.audio_recorder.lock().unwrap();
+            recorder.drain_chunk()
+        };
+        let Some(pcm) = pcm else {
+            return Ok(());
+        };
+
+        let chunk_path = app_dir.join("chunk_recording.wav");
+        audio::write_wav(&pcm, &chunk_path)?;
+
+        let raw_text = transcribe(app, settings, app_dir, &chunk_path).await;
+        let _ = std::fs::remove_file(&chunk_path);
+        let raw_text = raw_text?;
+
+        let cleaned = cleanup_partial(&raw_text);
+        if !cleaned.is_empty() {
+            paste_text(&format!("{} ", cleaned))?;
+        }
+
+        Ok(())
+    }
+}
+
+async fn transcribe(
+    app: &AppHandle,
+    settings: &Settings,
+    app_dir: &PathBuf,
+    audio_path: &PathBuf,
+) -> Result<String, String> {
+    match settings.engine.as_str() {
+        "local" => {
+            let model_path = app_dir.join(transcribe_local::model_filename(&settings.whisper_model));
+            transcribe_local::transcribe_local(app, &model_path, audio_path, &settings.language).await
+        }
+        "cloud" => transcribe_groq::transcribe_groq(&settings.groq_api_key, audio_path).await,
+        _ => Err(format!("Unknown engine: {}", settings.engine)),
     }
 }
 

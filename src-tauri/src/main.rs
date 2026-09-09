@@ -29,6 +29,9 @@ fn make_overlay_join_fullscreen_spaces(window: &tauri::WebviewWindow) {
 
     const NS_WINDOW_COLLECTION_BEHAVIOR_CAN_JOIN_ALL_SPACES: u64 = 1 << 0;
     const NS_WINDOW_COLLECTION_BEHAVIOR_FULL_SCREEN_AUXILIARY: u64 = 1 << 8;
+    // NSScreenSaverWindowLevel: high enough to render above a full-screen
+    // app's own content within its dedicated Space, not just join that Space.
+    const NS_SCREEN_SAVER_WINDOW_LEVEL: i64 = 1000;
 
     let Ok(ns_window_ptr) = window.ns_window() else {
         return;
@@ -40,6 +43,7 @@ fn make_overlay_join_fullscreen_spaces(window: &tauri::WebviewWindow) {
             | NS_WINDOW_COLLECTION_BEHAVIOR_CAN_JOIN_ALL_SPACES
             | NS_WINDOW_COLLECTION_BEHAVIOR_FULL_SCREEN_AUXILIARY;
         let _: () = msg_send![ns_window, setCollectionBehavior: updated];
+        let _: () = msg_send![ns_window, setLevel: NS_SCREEN_SAVER_WINDOW_LEVEL];
     }
 }
 
@@ -97,6 +101,30 @@ async fn toggle_recording(
     do_toggle_recording(&app, &state).await
 }
 
+/// How often to transcribe-and-paste what's been said so far while still
+/// recording, instead of waiting for the whole utterance to finish.
+const CHUNK_INTERVAL: std::time::Duration = std::time::Duration::from_secs(4);
+
+/// Spawns the periodic chunk-flush loop for one recording session. Ticks
+/// until recording state moves off Recording (stopped, or never started
+/// this session), then exits — `flush_chunk` itself is a no-op once state
+/// isn't Recording, but breaking out here avoids leaving idle loops running.
+fn spawn_chunk_flusher(handle: tauri::AppHandle) {
+    tauri::async_runtime::spawn(async move {
+        loop {
+            tokio::time::sleep(CHUNK_INTERVAL).await;
+            let state = handle.state::<AppState>();
+            if state.recorder.get_state() != RecordingState::Recording {
+                break;
+            }
+            let settings = state.settings.lock().unwrap().clone();
+            if let Err(e) = state.recorder.flush_chunk(&handle, &settings, &state.app_dir).await {
+                eprintln!("[TypeIt] Chunk flush error: {}", e);
+            }
+        }
+    });
+}
+
 /// Shared logic for toggle recording, used by both the Tauri command and hotkey handler.
 async fn do_toggle_recording(
     app: &tauri::AppHandle,
@@ -107,6 +135,7 @@ async fn do_toggle_recording(
         RecordingState::Ready => {
             let mic = state.settings.lock().unwrap().microphone.clone();
             state.recorder.start_recording(app, &mic)?;
+            spawn_chunk_flusher(app.clone());
             Ok("recording".to_string())
         }
         RecordingState::Recording => {
@@ -226,7 +255,10 @@ fn main() {
                                                 .microphone
                                                 .clone();
                                             match state.recorder.start_recording(&handle, &mic) {
-                                                Ok(_) => println!("[TypeIt] Recording started"),
+                                                Ok(_) => {
+                                                    println!("[TypeIt] Recording started");
+                                                    spawn_chunk_flusher(handle.clone());
+                                                }
                                                 Err(e) => eprintln!("[TypeIt] Start recording error: {}", e),
                                             }
                                         }

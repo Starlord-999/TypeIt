@@ -1,7 +1,13 @@
 pub fn paste_text(text: &str) -> Result<(), String> {
-    // Set clipboard (arboard is thread-safe)
+    // Set clipboard (arboard is thread-safe). NSPasteboard writes can fail
+    // transiently if another app touches the pasteboard at the same instant
+    // (more likely now that streaming chunks paste several times per
+    // utterance instead of once) — one retry clears this up in practice.
     let mut clipboard = arboard::Clipboard::new().map_err(|e| e.to_string())?;
-    clipboard.set_text(text).map_err(|e| e.to_string())?;
+    if clipboard.set_text(text).is_err() {
+        std::thread::sleep(std::time::Duration::from_millis(80));
+        clipboard.set_text(text).map_err(|e| e.to_string())?;
+    }
 
     // Small delay to ensure clipboard is set
     std::thread::sleep(std::time::Duration::from_millis(50));
