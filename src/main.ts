@@ -129,7 +129,7 @@ function startRecordingHotkey() {
   const heldMods = new Set<string>();
   let finished = false;
 
-  hotkeyRecordBtn.textContent = "Press a key combo...";
+  hotkeyRecordBtn.textContent = "Hold modifiers + press a key to finish (Esc to cancel)";
   hotkeyRecordBtn.disabled = true;
   const previousHotkey = currentSettings.hotkey;
   hotkeyDisplay.textContent = "...";
@@ -193,7 +193,12 @@ async function saveSettings() {
   currentSettings.whisperModel = modelSelect.value;
   currentSettings.groqApiKey = groqKey.value;
   currentSettings.language = languageSelect.value;
-  await invoke("save_settings", { settings: currentSettings });
+  try {
+    await invoke("save_settings", { settings: currentSettings });
+  } catch (e) {
+    console.error("save_settings failed:", e);
+    alert("Failed to save settings: " + e);
+  }
 }
 
 // Event listeners
