@@ -13,6 +13,12 @@ pub struct Settings {
     #[serde(rename = "recordingMode")]
     pub recording_mode: String,
     pub hotkey: String,
+    #[serde(default = "default_language")]
+    pub language: String,
+}
+
+fn default_language() -> String {
+    "auto".to_string()
 }
 
 impl Default for Settings {
@@ -24,6 +30,7 @@ impl Default for Settings {
             groq_api_key: String::new(),
             recording_mode: "toggle".to_string(),
             hotkey: "CmdOrCtrl+Shift+Space".to_string(),
+            language: default_language(),
         }
     }
 }
@@ -63,11 +70,12 @@ mod tests {
         assert_eq!(settings.groq_api_key, "");
         assert_eq!(settings.recording_mode, "toggle");
         assert_eq!(settings.hotkey, "CmdOrCtrl+Shift+Space");
+        assert_eq!(settings.language, "auto");
     }
 
     #[test]
     fn test_save_and_load() {
-        let dir = temp_dir().join("typr_test_settings");
+        let dir = temp_dir().join("typeit_test_settings");
         let _ = fs::remove_dir_all(&dir);
 
         let mut settings = Settings::default();
@@ -85,7 +93,7 @@ mod tests {
 
     #[test]
     fn test_load_missing_file_returns_default() {
-        let dir = temp_dir().join("typr_test_missing");
+        let dir = temp_dir().join("typeit_test_missing");
         let _ = fs::remove_dir_all(&dir);
         let settings = Settings::load(&dir);
         assert_eq!(settings, Settings::default());
@@ -93,7 +101,7 @@ mod tests {
 
     #[test]
     fn test_load_corrupt_json_returns_default() {
-        let dir = temp_dir().join("typr_test_corrupt");
+        let dir = temp_dir().join("typeit_test_corrupt");
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         fs::write(dir.join("config.json"), "not json").unwrap();

@@ -9,6 +9,7 @@ interface Settings {
   groqApiKey: string;
   recordingMode: string;
   hotkey: string;
+  language: string;
 }
 
 interface MicDevice {
@@ -35,9 +36,11 @@ const downloadBtn = document.getElementById("download-btn")!;
 const downloadProgress = document.getElementById("download-progress")!;
 const progressFill = document.getElementById("progress-fill")!;
 const groqKey = document.getElementById("groq-key") as HTMLInputElement;
+const languageSelect = document.getElementById("language-select") as HTMLSelectElement;
 const modeToggle = document.getElementById("mode-toggle")!;
 const modePtt = document.getElementById("mode-ptt")!;
-const hotkeyText = document.getElementById("hotkey-text")!;
+const hotkeyDisplay = document.getElementById("hotkey-display")!;
+const hotkeyRecordBtn = document.getElementById("hotkey-record-btn") as HTMLButtonElement;
 
 // Section navigation
 const navItems = document.querySelectorAll(".nav-item");
@@ -94,11 +97,73 @@ async function loadSettings() {
   // Groq key
   groqKey.value = currentSettings.groqApiKey;
 
+  // Language
+  languageSelect.value = currentSettings.language;
+
   // Recording mode
   setRecordingMode(currentSettings.recordingMode);
 
   // Hotkey
-  hotkeyText.textContent = currentSettings.hotkey.replace("CmdOrCtrl", "Cmd");
+  hotkeyDisplay.textContent = currentSettings.hotkey.replace("CmdOrCtrl", "Cmd");
+}
+
+function formatHotkey(hotkey: string): string {
+  return hotkey.replace("CmdOrCtrl", "Cmd").replace(/\+/g, " + ");
+}
+
+// Modifier codes recognized while recording; anything else is the "main" key
+// that completes the combo. Modifier-only combos aren't supported here since
+// tauri-plugin-global-shortcut requires a real key, not just modifiers.
+const MODIFIER_CODES: Record<string, string> = {
+  ControlLeft: "Control",
+  ControlRight: "Control",
+  AltLeft: "Alt",
+  AltRight: "Alt",
+  MetaLeft: "CmdOrCtrl",
+  MetaRight: "CmdOrCtrl",
+  ShiftLeft: "Shift",
+  ShiftRight: "Shift",
+};
+
+function startRecordingHotkey() {
+  const heldMods = new Set<string>();
+  let finished = false;
+
+  hotkeyRecordBtn.textContent = "Press a key combo...";
+  hotkeyRecordBtn.disabled = true;
+  const previousHotkey = currentSettings.hotkey;
+  hotkeyDisplay.textContent = "...";
+
+  const finish = (hotkey: string | null) => {
+    if (finished) return;
+    finished = true;
+    window.removeEventListener("keydown", onKeyDown, true);
+    hotkeyRecordBtn.textContent = "Record Shortcut";
+    hotkeyRecordBtn.disabled = false;
+    if (hotkey) {
+      currentSettings.hotkey = hotkey;
+      hotkeyDisplay.textContent = formatHotkey(hotkey);
+      saveSettings();
+    } else {
+      hotkeyDisplay.textContent = formatHotkey(previousHotkey);
+    }
+  };
+
+  const onKeyDown = (e: KeyboardEvent) => {
+    e.preventDefault();
+    const modName = MODIFIER_CODES[e.code];
+    if (modName) {
+      heldMods.add(modName);
+      hotkeyDisplay.textContent = [...heldMods].join(" + ");
+    } else if (e.code === "Escape") {
+      finish(null); // cancel, restore previous hotkey
+    } else {
+      // A real key completes the combo, with or without modifiers held.
+      finish([...heldMods, e.code].join("+"));
+    }
+  };
+
+  window.addEventListener("keydown", onKeyDown, true);
 }
 
 function setEngine(engine: string) {
@@ -127,6 +192,7 @@ async function saveSettings() {
   currentSettings.microphone = micSelect.value;
   currentSettings.whisperModel = modelSelect.value;
   currentSettings.groqApiKey = groqKey.value;
+  currentSettings.language = languageSelect.value;
   await invoke("save_settings", { settings: currentSettings });
 }
 
@@ -166,6 +232,8 @@ downloadBtn.addEventListener("click", async () => {
 
 groqKey.addEventListener("change", () => saveSettings());
 
+languageSelect.addEventListener("change", () => saveSettings());
+
 modeToggle.addEventListener("click", () => {
   setRecordingMode("toggle");
   saveSettings();
@@ -175,6 +243,8 @@ modePtt.addEventListener("click", () => {
   setRecordingMode("push-to-talk");
   saveSettings();
 });
+
+hotkeyRecordBtn.addEventListener("click", () => startRecordingHotkey());
 
 // Listen for recording state changes
 listen<string>("recording-state", (event) => {

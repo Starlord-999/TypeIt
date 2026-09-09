@@ -5,11 +5,11 @@ use std::sync::Mutex;
 use tauri::{Manager, State, WebviewUrl, WebviewWindowBuilder};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 
-use typr_lib::audio;
-use typr_lib::downloader;
-use typr_lib::recorder::{Recorder, RecordingState};
-use typr_lib::settings::Settings;
-use typr_lib::transcribe_local;
+use typeit_lib::audio;
+use typeit_lib::downloader;
+use typeit_lib::recorder::{Recorder, RecordingState};
+use typeit_lib::settings::Settings;
+use typeit_lib::transcribe_local;
 
 struct AppState {
     recorder: Recorder,
@@ -20,7 +20,7 @@ struct AppState {
 fn get_app_dir() -> PathBuf {
     dirs::config_dir()
         .unwrap_or_else(|| PathBuf::from("."))
-        .join("com.typr.app")
+        .join("com.typeit.app")
 }
 
 #[tauri::command]
@@ -149,38 +149,45 @@ fn main() {
             .build();
 
             match overlay {
-                Ok(_) => println!("[Typr] Overlay window created"),
-                Err(e) => eprintln!("[Typr] Failed to create overlay: {}", e),
+                Ok(_) => println!("[TypeIt] Overlay window created"),
+                Err(e) => eprintln!("[TypeIt] Failed to create overlay: {}", e),
             }
 
             let handle = app.handle().clone();
 
-            println!("[Typr] Registering global shortcut: {}", initial_hotkey);
+            println!("[TypeIt] Registering global shortcut: {}", initial_hotkey);
+
+            // macOS repeats "Pressed" while the key is held down; without this,
+            // toggle mode would start/stop rapidly for every repeat instead of once.
+            let key_down = std::sync::atomic::AtomicBool::new(false);
 
             match app.global_shortcut().on_shortcut(
                 initial_hotkey.as_str(),
                 move |_app, shortcut, event| {
-                    println!("[Typr] Hotkey event: {:?} state={:?}", shortcut, event.state);
+                    println!("[TypeIt] Hotkey event: {:?} state={:?}", shortcut, event.state);
                     let handle = handle.clone();
                     let state = handle.state::<AppState>();
                     let mode = state.settings.lock().unwrap().recording_mode.clone();
-                    println!("[Typr] Recording mode: {}", mode);
+                    println!("[TypeIt] Recording mode: {}", mode);
 
                     match event.state {
                         ShortcutState::Pressed => {
+                            if key_down.swap(true, std::sync::atomic::Ordering::SeqCst) {
+                                return; // repeat fire while held, ignore
+                            }
                             tauri::async_runtime::spawn(async move {
                                 let state = handle.state::<AppState>();
                                 match mode.as_str() {
                                     "toggle" => {
-                                        println!("[Typr] Toggle mode: calling do_toggle_recording");
+                                        println!("[TypeIt] Toggle mode: calling do_toggle_recording");
                                         match do_toggle_recording(&handle, state.inner()).await {
-                                            Ok(result) => println!("[Typr] Toggle result: {}", result),
-                                            Err(e) => eprintln!("[Typr] Toggle error: {}", e),
+                                            Ok(result) => println!("[TypeIt] Toggle result: {}", result),
+                                            Err(e) => eprintln!("[TypeIt] Toggle error: {}", e),
                                         }
                                     }
                                     "push-to-talk" => {
                                         let current = state.recorder.get_state();
-                                        println!("[Typr] PTT mode, current state: {:?}", current);
+                                        println!("[TypeIt] PTT mode, current state: {:?}", current);
                                         if current == RecordingState::Ready {
                                             let mic = state
                                                 .settings
@@ -189,8 +196,8 @@ fn main() {
                                                 .microphone
                                                 .clone();
                                             match state.recorder.start_recording(&handle, &mic) {
-                                                Ok(_) => println!("[Typr] Recording started"),
-                                                Err(e) => eprintln!("[Typr] Start recording error: {}", e),
+                                                Ok(_) => println!("[TypeIt] Recording started"),
+                                                Err(e) => eprintln!("[TypeIt] Start recording error: {}", e),
                                             }
                                         }
                                     }
@@ -199,6 +206,7 @@ fn main() {
                             });
                         }
                         ShortcutState::Released => {
+                            key_down.store(false, std::sync::atomic::Ordering::SeqCst);
                             if mode == "push-to-talk" {
                                 tauri::async_runtime::spawn(async move {
                                     let state = handle.state::<AppState>();
@@ -211,8 +219,8 @@ fn main() {
                                             &settings,
                                             &state.app_dir,
                                         ).await {
-                                            Ok(result) => println!("[Typr] Transcription: {}", result),
-                                            Err(e) => eprintln!("[Typr] Transcription error: {}", e),
+                                            Ok(result) => println!("[TypeIt] Transcription: {}", result),
+                                            Err(e) => eprintln!("[TypeIt] Transcription error: {}", e),
                                         }
                                     }
                                 });
@@ -221,8 +229,8 @@ fn main() {
                     }
                 },
             ) {
-                Ok(_) => println!("[Typr] Global shortcut registered successfully"),
-                Err(e) => eprintln!("[Typr] ERROR: Failed to register global shortcut: {}", e),
+                Ok(_) => println!("[TypeIt] Global shortcut registered successfully"),
+                Err(e) => eprintln!("[TypeIt] ERROR: Failed to register global shortcut: {}", e),
             }
 
             Ok(())

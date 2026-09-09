@@ -6,12 +6,13 @@ pub async fn transcribe_local(
     app: &AppHandle,
     model_path: &PathBuf,
     audio_path: &PathBuf,
+    language: &str,
 ) -> Result<String, String> {
     if !model_path.exists() {
         return Err("Whisper model not found. Please download a model first.".to_string());
     }
 
-    println!("[Typr] Running whisper.cpp sidecar with model {:?}", model_path);
+    println!("[TypeIt] Running whisper.cpp sidecar with model {:?}", model_path);
 
     let output = app
         .shell()
@@ -24,7 +25,7 @@ pub async fn transcribe_local(
             audio_path.to_str().unwrap(),
             "--no-timestamps",
             "-l",
-            "en",
+            language,
         ])
         .output()
         .await
@@ -36,7 +37,7 @@ pub async fn transcribe_local(
     }
 
     let text = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    println!("[Typr] Whisper output: {}", text);
+    println!("[TypeIt] Whisper output: {}", text);
     Ok(text)
 }
 

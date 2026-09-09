@@ -1,12 +1,12 @@
 [package]
-name = "typr"
+name = "typeit"
 version = "0.1.0"
 description = "A dictation app powered by Whisper"
 authors = ["you"]
 edition = "2021"
 
 [lib]
-name = "typr_lib"
+name = "typeit_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]

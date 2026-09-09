@@ -77,6 +77,26 @@ impl Recorder {
             update_overlay(app, &RecordingState::Transcribing);
         }
 
+        let result = self.save_and_transcribe(app, settings, app_dir).await;
+
+        // Always return to Ready, whether transcription succeeded or failed,
+        // otherwise a failure here leaves the app stuck showing "Transcribing".
+        {
+            let mut state = self.state.lock().unwrap();
+            *state = RecordingState::Ready;
+            let _ = app.emit("recording-state", RecordingState::Ready);
+            update_overlay(app, &RecordingState::Ready);
+        }
+
+        result
+    }
+
+    async fn save_and_transcribe(
+        &self,
+        app: &AppHandle,
+        settings: &Settings,
+        app_dir: &PathBuf,
+    ) -> Result<String, String> {
         let temp_path = app_dir.join("temp_recording.wav");
 
         // Save audio
@@ -89,7 +109,7 @@ impl Recorder {
         let raw_text = match settings.engine.as_str() {
             "local" => {
                 let model_path = app_dir.join(transcribe_local::model_filename(&settings.whisper_model));
-                transcribe_local::transcribe_local(app, &model_path, &temp_path).await?
+                transcribe_local::transcribe_local(app, &model_path, &temp_path, &settings.language).await?
             }
             "cloud" => {
                 transcribe_groq::transcribe_groq(&settings.groq_api_key, &temp_path).await?
@@ -106,14 +126,6 @@ impl Recorder {
         // Auto-paste
         if !cleaned.is_empty() {
             paste_text(&cleaned)?;
-        }
-
-        // Reset state
-        {
-            let mut state = self.state.lock().unwrap();
-            *state = RecordingState::Ready;
-            let _ = app.emit("recording-state", RecordingState::Ready);
-            update_overlay(app, &RecordingState::Ready);
         }
 
         Ok(cleaned)

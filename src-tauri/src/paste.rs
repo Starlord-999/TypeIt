@@ -10,10 +10,17 @@ pub fn paste_text(text: &str) -> Result<(), String> {
     // calls TSMGetInputSourceProperty requiring the main thread)
     #[cfg(target_os = "macos")]
     {
-        std::process::Command::new("osascript")
+        let output = std::process::Command::new("osascript")
             .args(["-e", r#"tell application "System Events" to keystroke "v" using command down"#])
             .output()
             .map_err(|e| format!("Failed to simulate paste: {}", e))?;
+
+        if !output.status.success() {
+            return Err(format!(
+                "osascript paste failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            ));
+        }
     }
 
     #[cfg(target_os = "windows")]
