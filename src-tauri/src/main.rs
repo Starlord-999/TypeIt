@@ -17,6 +17,32 @@ struct AppState {
     app_dir: PathBuf,
 }
 
+/// Makes the overlay float above full-screen apps, not just other normal
+/// windows. `set_visible_on_all_workspaces` alone only sets CanJoinAllSpaces,
+/// which covers regular desktop Spaces but not a Space currently occupied by
+/// a full-screen app — that additionally needs FullScreenAuxiliary, which
+/// isn't exposed through Tauri's safe API, hence the raw NSWindow call.
+#[cfg(target_os = "macos")]
+fn make_overlay_join_fullscreen_spaces(window: &tauri::WebviewWindow) {
+    use objc2::msg_send;
+    use objc2::runtime::AnyObject;
+
+    const NS_WINDOW_COLLECTION_BEHAVIOR_CAN_JOIN_ALL_SPACES: u64 = 1 << 0;
+    const NS_WINDOW_COLLECTION_BEHAVIOR_FULL_SCREEN_AUXILIARY: u64 = 1 << 8;
+
+    let Ok(ns_window_ptr) = window.ns_window() else {
+        return;
+    };
+    let ns_window = ns_window_ptr as *mut AnyObject;
+    unsafe {
+        let current: u64 = msg_send![ns_window, collectionBehavior];
+        let updated = current
+            | NS_WINDOW_COLLECTION_BEHAVIOR_CAN_JOIN_ALL_SPACES
+            | NS_WINDOW_COLLECTION_BEHAVIOR_FULL_SCREEN_AUXILIARY;
+        let _: () = msg_send![ns_window, setCollectionBehavior: updated];
+    }
+}
+
 fn get_app_dir() -> PathBuf {
     dirs::config_dir()
         .unwrap_or_else(|| PathBuf::from("."))
@@ -149,7 +175,11 @@ fn main() {
             .build();
 
             match overlay {
-                Ok(_) => println!("[TypeIt] Overlay window created"),
+                Ok(ref window) => {
+                    println!("[TypeIt] Overlay window created");
+                    #[cfg(target_os = "macos")]
+                    make_overlay_join_fullscreen_spaces(window);
+                }
                 Err(e) => eprintln!("[TypeIt] Failed to create overlay: {}", e),
             }
 
