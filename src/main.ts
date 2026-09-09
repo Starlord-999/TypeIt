@@ -189,7 +189,10 @@ async function checkModelStatus() {
 }
 
 async function saveSettings() {
-  currentSettings.microphone = micSelect.value;
+  // Only overwrite if the dropdown actually has a selection — an empty
+  // value (e.g. saved before mics finished populating) would otherwise
+  // silently break recording, since no device is named "".
+  if (micSelect.value) currentSettings.microphone = micSelect.value;
   currentSettings.whisperModel = modelSelect.value;
   currentSettings.groqApiKey = groqKey.value;
   currentSettings.language = languageSelect.value;
