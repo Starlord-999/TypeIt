@@ -1,0 +1,73 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos-latest
+            target-triple: aarch64-apple-darwin
+            whisper-binary: whisper-cli
+            whisper-binary-out: whisper-cpp-aarch64-apple-darwin
+          - platform: windows-latest
+            target-triple: x86_64-pc-windows-msvc
+            whisper-binary: whisper-cli.exe
+            whisper-binary-out: whisper-cpp-x86_64-pc-windows-msvc.exe
+
+    runs-on: ${{ matrix.platform }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install frontend dependencies
+        run: npm install
+
+      - name: Clone whisper.cpp
+        run: git clone --depth 1 https://github.com/ggml-org/whisper.cpp.git whisper-src
+
+      - name: Build whisper.cpp (static, no dylibs to bundle)
+        run: |
+          cmake -B whisper-src/build -S whisper-src -DBUILD_SHARED_LIBS=OFF -DCMAKE_BUILD_TYPE=Release
+          cmake --build whisper-src/build --config Release --target whisper-cli -j
+
+      - name: Place whisper.cpp sidecar (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          mkdir -p src-tauri/binaries
+          cp whisper-src/build/bin/${{ matrix.whisper-binary }} src-tauri/binaries/${{ matrix.whisper-binary-out }}
+          chmod +x src-tauri/binaries/${{ matrix.whisper-binary-out }}
+
+      - name: Place whisper.cpp sidecar (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path src-tauri/binaries
+          Copy-Item "whisper-src/build/bin/Release/${{ matrix.whisper-binary }}" "src-tauri/binaries/${{ matrix.whisper-binary-out }}"
+
+      - name: Build and release Tauri app
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: "TypeIt ${{ github.ref_name }}"
+          releaseDraft: true
+          prerelease: false
